@@ -41,6 +41,8 @@ class CFGDenoiser(nn.Module):
             "c_concat2": [torch.cat([cond["c_concat2"][0], cond["c_concat2"][0], cond["c_concat2"][0], uncond["c_concat2"][0]])],
         }
         out_cond, out_img_cond, out_seg_cond, out_uncond = self.inner_model(cfg_z, cfg_sigma, cond=cfg_cond).chunk(4)
+        if seg_cfg_scale == 0:
+            return out_uncond + text_cfg_scale * (out_cond - out_img_cond) + image_cfg_scale * (out_img_cond - out_uncond)
         return out_uncond + text_cfg_scale * (out_cond - out_img_cond) + image_cfg_scale * (out_img_cond - out_seg_cond) + seg_cfg_scale * (out_seg_cond - out_uncond)
 
 
@@ -105,6 +107,7 @@ def main():
     parser.add_argument("--cfg-text", default=7.5, type=float)
     parser.add_argument("--cfg-image", default=1.5, type=float)
     parser.add_argument("--cfg-seg", default=1.5, type=float)
+    parser.add_argument("--no-seg", action="store_true", help="Disable segmentation conditioning")
     parser.add_argument("--seed", type=int)
     args = parser.parse_args()
     # os.makedirs('/home/jovyan/.cache/torch/hub/checkpoints/')
@@ -127,7 +130,10 @@ def main():
                 caption = blip_model.generate(image, sample=True, top_p=0.9, max_length=20, min_length=5)
             args.edit = "turn the visible image of " + caption[0] + " into infrared"
             input_image = Image.open(os.path.join(args.input, file)).convert("RGB")
-            input_seg = Image.open(os.path.join(args.input + "_seg", file.split(".")[0] + ".png")).convert("RGB")
+            if args.no_seg:
+                input_seg = input_image.copy()
+            else:
+                input_seg = Image.open(os.path.join(args.input + "_seg", file.split(".")[0] + ".png")).convert("RGB")
             width, height = input_image.size
             factor = args.resolution / max(width, height)
             factor = math.ceil(min(width, height) * factor / 64) * 64 / min(width, height)

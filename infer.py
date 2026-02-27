@@ -117,7 +117,7 @@ def main():
     model_wrap = K.external.CompVisDenoiser(model)
     model_wrap_cfg = CFGDenoiser(model_wrap)
     null_token = model.get_learned_conditioning([""])
-    blip_model = blip_decoder(pretrained="/data/hanchong/DiffV2IR/blip/BLIP-main/model__base_caption.pth", image_size=384, vit="base")
+    blip_model = blip_decoder(pretrained="/data/hanchong/DiffV2IR/BLIP-main/model__base_caption.pth", image_size=384, vit='base')
     blip_model.eval()
     seed = random.randint(0, 100000) if args.seed is None else args.seed
     for root, _, files in os.walk(args.input):

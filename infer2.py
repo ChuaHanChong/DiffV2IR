@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import json
 import math
 import os
 import random
-import shutil
 import sys
 from argparse import ArgumentParser
 
@@ -21,7 +19,6 @@ from torchvision import transforms
 from torchvision.transforms.functional import InterpolationMode
 from tqdm import tqdm
 
-from blip_models.blip import blip_decoder
 
 sys.path.append("./stable_diffusion")
 from stable_diffusion.ldm.util import instantiate_from_config
@@ -44,16 +41,6 @@ class CFGDenoiser(nn.Module):
         if seg_cfg_scale == 0:
             return out_uncond + text_cfg_scale * (out_cond - out_img_cond) + image_cfg_scale * (out_img_cond - out_uncond)
         return out_uncond + text_cfg_scale * (out_cond - out_img_cond) + image_cfg_scale * (out_img_cond - out_seg_cond) + seg_cfg_scale * (out_seg_cond - out_uncond)
-
-
-def get_text_for_image(image_filename, json_file):
-    with open(json_file, "r", encoding="utf-8") as infile:
-        image_text_data = json.load(infile)
-
-    if image_filename in image_text_data:
-        return image_text_data[image_filename]
-    else:
-        return None
 
 
 def load_model_from_config(config, ckpt, vae_ckpt=None, verbose=False):
@@ -103,7 +90,6 @@ def main():
     parser.add_argument("--vae-ckpt", default=None, type=str)
     parser.add_argument("--input", required=True, type=str)
     parser.add_argument("--output", required=True, type=str)
-    parser.add_argument("--edit", default="turn the RGB image into the infrared one", type=str)
     parser.add_argument("--cfg-text", default=7.5, type=float)
     parser.add_argument("--cfg-image", default=1.5, type=float)
     parser.add_argument("--cfg-seg", default=1.5, type=float)
@@ -120,15 +106,13 @@ def main():
     model_wrap = K.external.CompVisDenoiser(model)
     model_wrap_cfg = CFGDenoiser(model_wrap)
     null_token = model.get_learned_conditioning([""])
-    blip_model = blip_decoder(pretrained="/data/hanchong/DiffV2IR/blip/BLIP-main/model__base_caption.pth", image_size=384, vit="base")
-    blip_model.eval()
     seed = random.randint(0, 100000) if args.seed is None else args.seed
     for root, _, files in os.walk(args.input):
+        random.shuffle(files)
+        caption = "turn the visible image of Marine Vessel into infrared"
         for file in tqdm(files, desc=f"Processing files in {root}"):
-            image = load_demo_image(image_size=384, device="cuda", img_url=os.path.join(root, file))
-            with torch.no_grad():
-                caption = blip_model.generate(image, sample=True, top_p=0.9, max_length=20, min_length=5)
-            args.edit = "turn the visible image of " + caption[0] + " into infrared"
+            if os.path.exists(os.path.join(args.output, file)):
+                continue
             input_image = Image.open(os.path.join(args.input, file)).convert("RGB")
             if args.no_seg:
                 input_seg = input_image.copy()
@@ -142,13 +126,9 @@ def main():
             input_image = ImageOps.fit(input_image, (width, height), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
             input_seg = ImageOps.fit(input_seg, (width, height), method=Image.Resampling.LANCZOS, centering=(0.5, 0.5))
 
-            if args.edit == "":
-                input_image.save(os.path.join(args.output, file))
-                return
-
             with torch.no_grad(), autocast("cuda"), model.ema_scope():
                 cond = {}
-                cond["c_crossattn"] = [model.get_learned_conditioning([args.edit])]
+                cond["c_crossattn"] = [model.get_learned_conditioning([caption])]
                 input_image = 2 * torch.tensor(np.array(input_image)).float() / 255 - 1
                 input_seg = 2 * torch.tensor(np.array(input_seg)).float() / 255 - 1
                 input_image = rearrange(input_image, "h w c -> 1 c h w").to(model.device)
@@ -177,7 +157,7 @@ def main():
                 x = torch.clamp((x + 1.0) / 2.0, min=0.0, max=1.0)
                 x = 255.0 * rearrange(x, "1 c h w -> h w c")
                 edited_image = Image.fromarray(x.type(torch.uint8).cpu().numpy())
-            edited_image.save(os.path.join(args.output, file))
+            edited_image.convert("L").save(os.path.join(args.output, file))
 
 
 if __name__ == "__main__":
